@@ -131,7 +131,6 @@ impl ActionStatus {
         if self.duration == 0 {
             self.count = 0;
         };
-        self.cooldown = sub_to_zero(self.cooldown, time);
 
         let mut time = time;
         while self.charges < action.max_charges && time > 0 {
@@ -634,6 +633,20 @@ fn main() {
         ActionName::Atonement,
         ActionName::Atonement,
         ActionName::Atonement,
+        ActionName::FastBlade,
+        ActionName::RiotBlade,
+        ActionName::RoyalAuthority,
+        ActionName::Atonement,
+        ActionName::Expiacion,
+        ActionName::CircleOfScorn,
+        ActionName::Atonement,
+        ActionName::Atonement,
+        ActionName::HolySpirit,
+        ActionName::FastBlade,
+        ActionName::RiotBlade,
+        ActionName::RoyalAuthority,
+        ActionName::Atonement,
+        ActionName::Atonement,
     ];
 
     for action in action_sequence {
@@ -644,7 +657,7 @@ fn main() {
             print!("  ");
         }
         println!(
-            "{:?} -> time: {} (+{}), damage: {} (+{}), mp: {}, fof: {} / {}",
+            "{:?} -> time: {} (+{}), damage: {} (+{}), mp: {}, intervene: {} / {}",
             action,
             ROTATION_DURATION - player.time,
             last_time - player.time,
@@ -653,12 +666,12 @@ fn main() {
             player.mp,
             player
                 .action_status
-                .get(&ActionName::FightOrFlight)
+                .get(&ActionName::Intervene)
                 .unwrap()
-                .duration,
+                .charges,
             player
                 .action_status
-                .get(&ActionName::FightOrFlight)
+                .get(&ActionName::Intervene)
                 .unwrap()
                 .cooldown,
         );
