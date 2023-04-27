@@ -103,7 +103,7 @@ struct Player {
 impl Default for Player {
     fn default() -> Self {
         Player {
-            time: ROTATION_DURATION,
+            time: 0,
             mp: 10000,
             damage: 0,
             global_cooldown: 0,
@@ -153,9 +153,7 @@ impl ActionStatus {
 #[derive(Debug)]
 enum ActionApplyError {
     NotReady,
-    CooldownOvertime,
     MpNotEnough,
-    CastOvertime,
 }
 
 impl Player {
@@ -181,22 +179,15 @@ impl Player {
         };
     }
 
-    pub fn tick(&mut self, time: u32, actions_map: &ActionsMap) -> Option<()> {
-        if self.time < time {
-            return None;
-        }
-        let new_time = self.time - time;
-        self.recover_mp(((self.time / 3000) - (new_time / 3000)) * 200);
+    pub fn tick(&mut self, time: u32, actions_map: &ActionsMap) {
+        let new_time = self.time + time;
+        self.recover_mp(((new_time / 3000) - (self.time / 3000)) * 200);
         self.time = new_time;
         self.global_cooldown = sub_to_zero(self.global_cooldown, time);
         for (action_name, action) in &actions_map.map {
             let action_status = self.action_status.get_mut(action_name).unwrap();
             action_status.tick(time, action);
-            // if action_status.cooldown > self.time {
-            //     return None;
-            // }
         }
-        Some(())
     }
 
     pub fn hit(&mut self, damage: u32) {
@@ -238,12 +229,10 @@ impl Player {
             );
         }
 
-        if wait_time > 0 && ret.tick(wait_time, actions_map).is_none() {
-            return Err(ActionApplyError::CooldownOvertime);
-        }
+        ret.tick(wait_time, actions_map);
 
-        while ret.mp < action.mp_cost && ret.time >= 3000 {
-            ret.tick((ret.time - (ret.time / 3000) - 1) * 3000, actions_map);
+        while ret.mp < action.mp_cost {
+            ret.tick(((ret.time / 3000) + 1) * 3000 - ret.time, actions_map);
         }
         if ret.mp < action.mp_cost {
             return Err(ActionApplyError::MpNotEnough);
@@ -379,9 +368,7 @@ impl Player {
         };
 
         ret.hit(potency);
-        if ret.tick(cast, actions_map).is_none() {
-            return Err(ActionApplyError::CastOvertime);
-        }
+        ret.tick(cast, actions_map);
         Ok(ret)
     }
 }
@@ -659,8 +646,8 @@ fn main() {
         println!(
             "{:?} -> time: {} (+{}), damage: {} (+{}), mp: {}, intervene: {} / {}",
             action,
-            ROTATION_DURATION - player.time,
-            last_time - player.time,
+            player.time,
+            player.time - last_time,
             player.damage,
             player.damage - last_damage,
             player.mp,
