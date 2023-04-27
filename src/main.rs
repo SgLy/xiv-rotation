@@ -1,37 +1,43 @@
-use std::{cmp, collections::HashMap, fmt::Debug, hash::Hash};
+use std::{cmp, collections::BTreeMap, fmt::Debug, hash::Hash};
 
-const ROTATION_DURATION: u32 = 60000;
+use search::search;
+
+mod search;
+mod sequence;
+
+// const DAMANGE_PER_100_POTENCY: u32 = 2706;
 const ANIMATION_LOCK: u32 = 800;
 const GLOBAL_COOLDOWN: u32 = 2500;
 
-#[derive(Debug, Clone, Hash)]
-enum BasicCombo {
+#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub enum BasicCombo {
     None,
     FastBlade,
     RiotBlade,
 }
-#[derive(Debug, Clone, Hash)]
-enum BladeCombo {
+#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub enum BladeCombo {
     None,
     Confiteor,
     BladeOfFaith,
     BladeOfTruth,
 }
 
-#[derive(Debug, Clone, Hash)]
-enum DivineMight {
+#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub enum DivineMight {
     None,
     Ready,
 }
 
-#[derive(Debug, Clone, Hash)]
-enum Confiteor {
+#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Confiteor {
     None,
     Ready,
 }
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone)]
-enum ActionName {
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone)]
+pub enum ActionName {
+    None,
     FastBlade,
     FightOrFlight,
     RiotBlade,
@@ -50,14 +56,14 @@ enum ActionName {
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
-enum CooldownType {
+pub enum CooldownType {
     Global,
     GlobalStandalone,
     OffGlobal,
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
-struct Action {
+pub struct Action {
     name: ActionName,
     cooldown_type: CooldownType,
     cast: u32,
@@ -72,8 +78,8 @@ struct Action {
     max_charges: u32,
 }
 
-#[derive(PartialEq, Eq, Hash, Clone)]
-struct ActionStatus {
+#[derive(PartialEq, Eq, Clone, Hash)]
+pub struct ActionStatus {
     name: ActionName,
     cooldown: u32,
     duration: u32,
@@ -83,12 +89,16 @@ struct ActionStatus {
 
 impl Debug for ActionStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "")
+        write!(
+            f,
+            "cd={}, charges={}, duration={}, count={}",
+            self.cooldown, self.charges, self.duration, self.count
+        )
     }
 }
 
-#[derive(Debug, Clone)]
-struct Player {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Player {
     time: u32,
     mp: u32,
     damage: u32,
@@ -97,7 +107,20 @@ struct Player {
     blade_combo: BladeCombo,
     divine_might: DivineMight,
     confiteor: Confiteor,
-    action_status: HashMap<ActionName, ActionStatus>,
+    action_status: BTreeMap<ActionName, ActionStatus>,
+}
+
+impl Hash for Player {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.time.hash(state);
+        self.mp.hash(state);
+        self.global_cooldown.hash(state);
+        self.basic_combo.hash(state);
+        self.blade_combo.hash(state);
+        self.divine_might.hash(state);
+        self.confiteor.hash(state);
+        self.action_status.hash(state);
+    }
 }
 
 impl Default for Player {
@@ -111,7 +134,7 @@ impl Default for Player {
             blade_combo: BladeCombo::None,
             divine_might: DivineMight::None,
             confiteor: Confiteor::None,
-            action_status: HashMap::new(),
+            action_status: BTreeMap::new(),
         }
     }
 }
@@ -151,7 +174,7 @@ impl ActionStatus {
 }
 
 #[derive(Debug)]
-enum ActionApplyError {
+pub enum ActionApplyError {
     NotReady,
     MpNotEnough,
 }
@@ -200,12 +223,12 @@ impl Player {
     }
 
     pub fn apply_action(
-        self,
+        &self,
         action_name: &ActionName,
         actions_map: &ActionsMap,
     ) -> Result<Self, ActionApplyError> {
         let action = actions_map.map.get(action_name).unwrap();
-        let mut ret = self;
+        let mut ret = self.clone();
 
         macro_rules! action_status_mut {
             () => {
@@ -260,6 +283,9 @@ impl Player {
         let mut cast = action.cast;
 
         match action.name {
+            ActionName::None => {
+                panic!("action None should not be applied")
+            }
             ActionName::FastBlade => {
                 ret.basic_combo = BasicCombo::FastBlade;
                 ret.blade_combo = BladeCombo::None;
@@ -374,21 +400,20 @@ impl Player {
 }
 
 #[derive(Debug, Default)]
-struct ActionsMap {
-    map: HashMap<ActionName, Action>,
+pub struct ActionsMap {
+    map: BTreeMap<ActionName, Action>,
 }
 
 impl ActionsMap {
-    pub fn add(mut self, action: Action) -> Self {
+    pub fn add_action(mut self, action: Action) -> Self {
         self.map.insert(action.name.clone(), action);
         self
     }
 }
 
 fn main() {
-    let mut player = Player::default();
     let actions_map = ActionsMap::default()
-        .add(Action {
+        .add_action(Action {
             name: ActionName::FastBlade,
             cooldown_type: CooldownType::Global,
             cast: ANIMATION_LOCK,
@@ -402,7 +427,7 @@ fn main() {
             tertiary_potency: 0,
             max_charges: 1,
         })
-        .add(Action {
+        .add_action(Action {
             name: ActionName::FightOrFlight,
             cooldown_type: CooldownType::OffGlobal,
             cast: ANIMATION_LOCK,
@@ -416,7 +441,7 @@ fn main() {
             tertiary_potency: 0,
             max_charges: 1,
         })
-        .add(Action {
+        .add_action(Action {
             name: ActionName::RiotBlade,
             cooldown_type: CooldownType::Global,
             cast: ANIMATION_LOCK,
@@ -430,7 +455,7 @@ fn main() {
             tertiary_potency: 0,
             max_charges: 1,
         })
-        .add(Action {
+        .add_action(Action {
             name: ActionName::CircleOfScorn,
             cooldown_type: CooldownType::OffGlobal,
             cast: ANIMATION_LOCK,
@@ -444,7 +469,7 @@ fn main() {
             tertiary_potency: 0,
             max_charges: 1,
         })
-        .add(Action {
+        .add_action(Action {
             name: ActionName::GoringBlade,
             cooldown_type: CooldownType::GlobalStandalone,
             cast: ANIMATION_LOCK,
@@ -458,7 +483,7 @@ fn main() {
             tertiary_potency: 0,
             max_charges: 1,
         })
-        .add(Action {
+        .add_action(Action {
             name: ActionName::RoyalAuthority,
             cooldown_type: CooldownType::Global,
             cast: ANIMATION_LOCK,
@@ -472,7 +497,7 @@ fn main() {
             tertiary_potency: 0,
             max_charges: 1,
         })
-        .add(Action {
+        .add_action(Action {
             name: ActionName::HolySpirit,
             cooldown_type: CooldownType::Global,
             cast: 1500,
@@ -486,7 +511,7 @@ fn main() {
             tertiary_potency: 6500,
             max_charges: 1,
         })
-        .add(Action {
+        .add_action(Action {
             name: ActionName::Requiescat,
             cooldown_type: CooldownType::OffGlobal,
             cast: ANIMATION_LOCK,
@@ -500,7 +525,7 @@ fn main() {
             tertiary_potency: 0,
             max_charges: 1,
         })
-        .add(Action {
+        .add_action(Action {
             name: ActionName::Intervene,
             cooldown_type: CooldownType::OffGlobal,
             cast: ANIMATION_LOCK,
@@ -514,7 +539,7 @@ fn main() {
             tertiary_potency: 0,
             max_charges: 2,
         })
-        .add(Action {
+        .add_action(Action {
             name: ActionName::Atonement,
             cooldown_type: CooldownType::Global,
             cast: ANIMATION_LOCK,
@@ -528,7 +553,7 @@ fn main() {
             tertiary_potency: 0,
             max_charges: 1,
         })
-        .add(Action {
+        .add_action(Action {
             name: ActionName::Confiteor,
             cooldown_type: CooldownType::Global,
             cast: ANIMATION_LOCK,
@@ -542,7 +567,7 @@ fn main() {
             tertiary_potency: 0,
             max_charges: 1,
         })
-        .add(Action {
+        .add_action(Action {
             name: ActionName::Expiacion,
             cooldown_type: CooldownType::OffGlobal,
             cast: ANIMATION_LOCK,
@@ -556,7 +581,7 @@ fn main() {
             tertiary_potency: 0,
             max_charges: 1,
         })
-        .add(Action {
+        .add_action(Action {
             name: ActionName::BladeOfFaith,
             cooldown_type: CooldownType::Global,
             cast: ANIMATION_LOCK,
@@ -570,7 +595,7 @@ fn main() {
             tertiary_potency: 0,
             max_charges: 1,
         })
-        .add(Action {
+        .add_action(Action {
             name: ActionName::BladeOfTruth,
             cooldown_type: CooldownType::Global,
             cast: ANIMATION_LOCK,
@@ -584,7 +609,7 @@ fn main() {
             tertiary_potency: 0,
             max_charges: 1,
         })
-        .add(Action {
+        .add_action(Action {
             name: ActionName::BladeOfValor,
             cooldown_type: CooldownType::Global,
             cast: ANIMATION_LOCK,
@@ -599,68 +624,5 @@ fn main() {
             max_charges: 1,
         });
 
-    player.assign_actions(&actions_map);
-
-    let action_sequence: Vec<ActionName> = vec![
-        ActionName::FastBlade,
-        ActionName::RiotBlade,
-        ActionName::RoyalAuthority,
-        ActionName::FightOrFlight,
-        ActionName::Requiescat,
-        ActionName::GoringBlade,
-        ActionName::Expiacion,
-        ActionName::CircleOfScorn,
-        ActionName::Confiteor,
-        ActionName::Intervene,
-        ActionName::BladeOfFaith,
-        ActionName::Intervene,
-        ActionName::BladeOfTruth,
-        ActionName::BladeOfValor,
-        ActionName::HolySpirit,
-        ActionName::Atonement,
-        ActionName::Atonement,
-        ActionName::Atonement,
-        ActionName::FastBlade,
-        ActionName::RiotBlade,
-        ActionName::RoyalAuthority,
-        ActionName::Atonement,
-        ActionName::Expiacion,
-        ActionName::CircleOfScorn,
-        ActionName::Atonement,
-        ActionName::Atonement,
-        ActionName::HolySpirit,
-        ActionName::FastBlade,
-        ActionName::RiotBlade,
-        ActionName::RoyalAuthority,
-        ActionName::Atonement,
-        ActionName::Atonement,
-    ];
-
-    for action in action_sequence {
-        let last_time = player.time;
-        let last_damage = player.damage;
-        player = player.apply_action(&action, &actions_map).unwrap();
-        if let CooldownType::OffGlobal = actions_map.map.get(&action).unwrap().cooldown_type {
-            print!("  ");
-        }
-        println!(
-            "{:?} -> time: {} (+{}), damage: {} (+{}), mp: {}, intervene: {} / {}",
-            action,
-            player.time,
-            player.time - last_time,
-            player.damage,
-            player.damage - last_damage,
-            player.mp,
-            player
-                .action_status
-                .get(&ActionName::Intervene)
-                .unwrap()
-                .charges,
-            player
-                .action_status
-                .get(&ActionName::Intervene)
-                .unwrap()
-                .cooldown,
-        );
-    }
+    search(&actions_map);
 }
