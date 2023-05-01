@@ -1,6 +1,8 @@
-use crate::{ActionName, ActionsMap, CooldownType, Player};
+use enum_map::EnumMap;
 
-pub fn play_sequence(actions_map: &ActionsMap) {
+use crate::{Action, ActionName, CooldownType, Player};
+
+pub fn play_sequence(actions_map: &EnumMap<ActionName, Action>) {
     let mut player = Player::default();
     player.assign_actions(actions_map);
 
@@ -43,7 +45,7 @@ pub fn play_sequence(actions_map: &ActionsMap) {
         let last_time = player.time;
         let last_damage = player.damage;
         player = player.apply_action(action, actions_map).unwrap();
-        if let CooldownType::OffGlobal = actions_map.map.get(action).unwrap().cooldown_type {
+        if let CooldownType::OffGlobal = actions_map[*action].cooldown_type {
             print!("  ");
         }
         println!(
@@ -54,16 +56,8 @@ pub fn play_sequence(actions_map: &ActionsMap) {
             (player.damage as f64) / (player.time as f64) * 1000f64,
             player.damage - last_damage,
             player.mp,
-            player
-                .action_status
-                .get(&ActionName::Intervene)
-                .unwrap()
-                .charges,
-            player
-                .action_status
-                .get(&ActionName::Intervene)
-                .unwrap()
-                .cooldown,
+            player.action_status[ActionName::Intervene].charges,
+            player.action_status[ActionName::Intervene].cooldown,
         );
     }
 }

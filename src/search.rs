@@ -1,11 +1,31 @@
 // use min_max_heap::MinMaxHeap;
 use std::collections::{BinaryHeap, HashMap};
 
-use crate::{calculate_hash, ActionName, ActionsMap, Player};
+use enum_map::EnumMap;
 
-const MAX_TIME: u32 = 7500;
+use crate::{calculate_hash, Action, ActionName, Player};
 
-pub fn search(actions_map: &ActionsMap) {
+const MAX_TIME: u32 = 10000;
+
+const ACTION_NAME_LIST: [ActionName; 15] = [
+    ActionName::FastBlade,
+    ActionName::FightOrFlight,
+    ActionName::RiotBlade,
+    ActionName::CircleOfScorn,
+    ActionName::GoringBlade,
+    ActionName::RoyalAuthority,
+    ActionName::HolySpirit,
+    ActionName::Requiescat,
+    ActionName::Intervene,
+    ActionName::Atonement,
+    ActionName::Confiteor,
+    ActionName::Expiacion,
+    ActionName::BladeOfFaith,
+    ActionName::BladeOfTruth,
+    ActionName::BladeOfValor,
+];
+
+pub fn search(actions_map: &EnumMap<ActionName, Action>) {
     let mut player = Player::default();
     player.assign_actions(actions_map);
 
@@ -34,10 +54,10 @@ pub fn search(actions_map: &ActionsMap) {
             println!("new best! {}", ans);
         }
         cnt += 1;
-        if cnt % 10000 == 0 {
+        if cnt % 50000 == 0 {
             println!("{} {}", cnt, heap.len());
         }
-        for action_name in actions_map.map.keys() {
+        for action_name in &ACTION_NAME_LIST {
             let new_player = player.apply_action(action_name, actions_map);
             if let Ok(new_player) = new_player {
                 if new_player.time <= MAX_TIME {

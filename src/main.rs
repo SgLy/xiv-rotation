@@ -1,6 +1,7 @@
+use enum_map::{enum_map, Enum, EnumMap};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use std::{cmp, collections::BTreeMap, fmt::Debug};
+use std::{cmp, fmt::Debug};
 
 use search::search;
 
@@ -43,7 +44,7 @@ pub enum Confiteor {
     Ready,
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Copy, Clone)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Copy, Clone, Enum)]
 pub enum ActionName {
     None,
     FastBlade,
@@ -95,6 +96,18 @@ pub struct ActionStatus {
     count: u32,
 }
 
+impl Default for ActionStatus {
+    fn default() -> Self {
+        ActionStatus {
+            name: ActionName::None,
+            cooldown: 0,
+            duration: 0,
+            charges: 0,
+            count: 0,
+        }
+    }
+}
+
 impl Debug for ActionStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -115,7 +128,7 @@ pub struct Player {
     blade_combo: BladeCombo,
     divine_might: DivineMight,
     confiteor: Confiteor,
-    action_status: BTreeMap<ActionName, ActionStatus>,
+    action_status: EnumMap<ActionName, ActionStatus>,
 }
 
 // impl Player {
@@ -148,7 +161,7 @@ impl Default for Player {
             blade_combo: BladeCombo::None,
             divine_might: DivineMight::None,
             confiteor: Confiteor::None,
-            action_status: BTreeMap::new(),
+            action_status: EnumMap::default(),
         }
     }
 }
@@ -168,9 +181,10 @@ impl Ord for Player {
             return cmp::Ordering::Greater;
         }
         if self.time != other.time {
-            return self.time.cmp(&other.time).reverse();
+            return self.time.cmp(&other.time);
         }
-        calculate_hash(self).cmp(&calculate_hash(other))
+        cmp::Ordering::Equal
+        // calculate_hash(self).cmp(&calculate_hash(other))
     }
 }
 
@@ -213,21 +227,16 @@ pub enum ActionApplyError {
     NotReady,
     MpNotEnough,
     WaitTooLong,
+    NoneAction,
 }
 
 impl Player {
-    pub fn assign_actions(&mut self, actions_map: &ActionsMap) {
-        for (action_name, action) in &actions_map.map {
-            self.action_status.insert(
-                *action_name,
-                ActionStatus {
-                    name: *action_name,
-                    cooldown: 0,
-                    duration: 0,
-                    charges: action.max_charges,
-                    count: 0,
-                },
-            );
+    pub fn assign_actions(&mut self, actions_map: &EnumMap<ActionName, Action>) {
+        for (action_name, action) in actions_map {
+            self.action_status[action_name].cooldown = 0;
+            self.action_status[action_name].duration = 0;
+            self.action_status[action_name].charges = action.max_charges;
+            self.action_status[action_name].count = 0;
         }
     }
 
@@ -238,20 +247,18 @@ impl Player {
         };
     }
 
-    pub fn tick(&mut self, time: u32, actions_map: &ActionsMap) {
+    pub fn tick(&mut self, time: u32, actions_map: &EnumMap<ActionName, Action>) {
         let new_time = self.time + time;
         self.recover_mp(((new_time / 3000) - (self.time / 3000)) * 200);
         self.time = new_time;
         self.global_cooldown = sub_to_zero(self.global_cooldown, time);
-        for (action_name, action) in &actions_map.map {
-            let action_status = self.action_status.get_mut(action_name).unwrap();
-            action_status.tick(time, action);
+        for (action_name, action) in actions_map {
+            self.action_status[action_name].tick(time, action);
         }
     }
 
     pub fn hit(&mut self, damage: u32) {
-        let fight_or_flight = self.action_status.get(&ActionName::FightOrFlight).unwrap();
-        self.damage += if fight_or_flight.duration > 0 {
+        self.damage += if self.action_status[ActionName::FightOrFlight].duration > 0 {
             damage / 4 * 5
         } else {
             damage
@@ -261,42 +268,40 @@ impl Player {
     pub fn apply_action(
         &self,
         action_name: &ActionName,
-        actions_map: &ActionsMap,
+        actions_map: &EnumMap<ActionName, Action>,
     ) -> Result<Self, ActionApplyError> {
-        let action = actions_map.map.get(action_name).unwrap();
+        let action = &actions_map[*action_name];
         let mut ret = self.clone();
-
-        macro_rules! action_status_mut {
-            () => {
-                ret.action_status.get_mut(action_name).unwrap()
-            };
-        }
 
         let mut wait_time = match action.cooldown_type {
             CooldownType::Global | CooldownType::GlobalStandalone => ret.global_cooldown,
             _ => 0,
         };
-        if action_status_mut!().charges == 0 {
-            wait_time = cmp::max(
-                wait_time,
-                match action.cooldown_type {
-                    CooldownType::GlobalStandalone | CooldownType::OffGlobal => {
-                        action_status_mut!().cooldown
-                    }
-                    _ => 0,
-                },
-            );
+
+        {
+            let action_status = &ret.action_status[*action_name];
+            if action_status.charges == 0 {
+                wait_time = cmp::max(
+                    wait_time,
+                    match action.cooldown_type {
+                        CooldownType::GlobalStandalone | CooldownType::OffGlobal => {
+                            action_status.cooldown
+                        }
+                        _ => 0,
+                    },
+                );
+            }
         }
 
-        // if wait_time > GLOBAL_COOLDOWN {
-        //     return Err(ActionApplyError::WaitTooLong);
-        // }
+        if wait_time > GLOBAL_COOLDOWN {
+            return Err(ActionApplyError::WaitTooLong);
+        }
 
         ret.tick(wait_time, actions_map);
 
-        while ret.mp < action.mp_cost {
-            ret.tick(((ret.time / 3000) + 1) * 3000 - ret.time, actions_map);
-        }
+        // while ret.mp < action.mp_cost {
+        //     ret.tick(((ret.time / 3000) + 1) * 3000 - ret.time, actions_map);
+        // }
         if ret.mp < action.mp_cost {
             return Err(ActionApplyError::MpNotEnough);
         }
@@ -304,7 +309,7 @@ impl Player {
         ret.recover_mp(action.mp_restore);
 
         {
-            let mut action_status = action_status_mut!();
+            let action_status = &mut ret.action_status[*action_name];
             if action_status.charges == action.max_charges {
                 action_status.cooldown = action.recast;
             }
@@ -324,7 +329,7 @@ impl Player {
 
         match action.name {
             ActionName::None => {
-                panic!("action None should not be applied")
+                return Err(ActionApplyError::NoneAction);
             }
             ActionName::FastBlade => {
                 ret.basic_combo = BasicCombo::FastBlade;
@@ -345,9 +350,8 @@ impl Player {
             ActionName::RoyalAuthority => {
                 if let BasicCombo::RiotBlade = ret.basic_combo {
                     potency = action.secondary_potency;
-                    let atonement_status =
-                        ret.action_status.get_mut(&ActionName::Atonement).unwrap();
-                    let atonement = actions_map.map.get(&ActionName::Atonement).unwrap();
+                    let atonement_status = &mut ret.action_status[ActionName::Atonement];
+                    let atonement = &actions_map[ActionName::Atonement];
                     atonement_status.count = atonement.max_count;
                     atonement_status.duration = atonement.max_duration;
                     ret.divine_might = DivineMight::Ready;
@@ -356,7 +360,7 @@ impl Player {
                 ret.blade_combo = BladeCombo::None;
             }
             ActionName::HolySpirit => {
-                let requiescat_status = ret.action_status.get_mut(&ActionName::Requiescat).unwrap();
+                let requiescat_status = &mut ret.action_status[ActionName::Requiescat];
                 if let DivineMight::Ready = ret.divine_might {
                     potency = action.secondary_potency;
                     cast = ANIMATION_LOCK;
@@ -368,19 +372,21 @@ impl Player {
                 }
             }
             ActionName::Requiescat => {
-                action_status_mut!().count = action.max_count;
-                action_status_mut!().duration = action.max_duration;
+                let action_status = &mut ret.action_status[*action_name];
+                action_status.count = action.max_count;
+                action_status.duration = action.max_duration;
                 ret.confiteor = Confiteor::Ready;
             }
             ActionName::Intervene => {}
             ActionName::Atonement => {
-                if action_status_mut!().count == 0 {
+                let action_status = &mut ret.action_status[*action_name];
+                if action_status.count == 0 {
                     return Err(ActionApplyError::NotReady);
                 }
-                action_status_mut!().count -= 1;
+                action_status.count -= 1;
             }
             ActionName::Confiteor => {
-                let requiescat_status = ret.action_status.get_mut(&ActionName::Requiescat).unwrap();
+                let requiescat_status = &mut ret.action_status[ActionName::Requiescat];
                 if let Confiteor::None = ret.confiteor {
                     return Err(ActionApplyError::NotReady);
                 }
@@ -394,7 +400,7 @@ impl Player {
             }
             ActionName::Expiacion => {}
             ActionName::BladeOfFaith => {
-                let requiescat_status = ret.action_status.get_mut(&ActionName::Requiescat).unwrap();
+                let requiescat_status = &mut ret.action_status[ActionName::Requiescat];
                 if let BladeCombo::Confiteor = ret.blade_combo {
                     if requiescat_status.count > 0 {
                         requiescat_status.count -= 1;
@@ -407,7 +413,7 @@ impl Player {
                 }
             }
             ActionName::BladeOfTruth => {
-                let requiescat_status = ret.action_status.get_mut(&ActionName::Requiescat).unwrap();
+                let requiescat_status = &mut ret.action_status[ActionName::Requiescat];
                 if let BladeCombo::BladeOfFaith = ret.blade_combo {
                     if requiescat_status.count > 0 {
                         requiescat_status.count -= 1;
@@ -419,7 +425,7 @@ impl Player {
                 }
             }
             ActionName::BladeOfValor => {
-                let requiescat_status = ret.action_status.get_mut(&ActionName::Requiescat).unwrap();
+                let requiescat_status = &mut ret.action_status[ActionName::Requiescat];
                 if let BladeCombo::BladeOfTruth = ret.blade_combo {
                     if requiescat_status.count > 0 {
                         requiescat_status.count -= 1;
@@ -439,21 +445,23 @@ impl Player {
     }
 }
 
-#[derive(Debug, Default)]
-pub struct ActionsMap {
-    map: BTreeMap<ActionName, Action>,
-}
-
-impl ActionsMap {
-    pub fn add_action(mut self, action: Action) -> Self {
-        self.map.insert(action.name, action);
-        self
-    }
-}
-
 fn main() {
-    let actions_map = ActionsMap::default()
-        .add_action(Action {
+    let actions_map = enum_map! {
+        ActionName::None => Action {
+            name: ActionName::FastBlade,
+            cooldown_type: CooldownType::Global,
+            cast: ANIMATION_LOCK,
+            recast: GLOBAL_COOLDOWN,
+            max_duration: 0,
+            max_count: 0,
+            mp_cost: 0,
+            mp_restore: 0,
+            potency: 0,
+            secondary_potency: 0,
+            tertiary_potency: 0,
+            max_charges: 1,
+        },
+        ActionName::FastBlade => Action {
             name: ActionName::FastBlade,
             cooldown_type: CooldownType::Global,
             cast: ANIMATION_LOCK,
@@ -466,8 +474,8 @@ fn main() {
             secondary_potency: 0,
             tertiary_potency: 0,
             max_charges: 1,
-        })
-        .add_action(Action {
+        },
+        ActionName::FightOrFlight => Action {
             name: ActionName::FightOrFlight,
             cooldown_type: CooldownType::OffGlobal,
             cast: ANIMATION_LOCK,
@@ -480,8 +488,8 @@ fn main() {
             secondary_potency: 0,
             tertiary_potency: 0,
             max_charges: 1,
-        })
-        .add_action(Action {
+        },
+        ActionName::RiotBlade => Action {
             name: ActionName::RiotBlade,
             cooldown_type: CooldownType::Global,
             cast: ANIMATION_LOCK,
@@ -494,8 +502,8 @@ fn main() {
             secondary_potency: 2800,
             tertiary_potency: 0,
             max_charges: 1,
-        })
-        .add_action(Action {
+        },
+        ActionName::CircleOfScorn => Action {
             name: ActionName::CircleOfScorn,
             cooldown_type: CooldownType::OffGlobal,
             cast: ANIMATION_LOCK,
@@ -508,8 +516,8 @@ fn main() {
             secondary_potency: 0,
             tertiary_potency: 0,
             max_charges: 1,
-        })
-        .add_action(Action {
+        },
+        ActionName::GoringBlade => Action {
             name: ActionName::GoringBlade,
             cooldown_type: CooldownType::GlobalStandalone,
             cast: ANIMATION_LOCK,
@@ -522,8 +530,8 @@ fn main() {
             secondary_potency: 0,
             tertiary_potency: 0,
             max_charges: 1,
-        })
-        .add_action(Action {
+        },
+        ActionName::RoyalAuthority => Action {
             name: ActionName::RoyalAuthority,
             cooldown_type: CooldownType::Global,
             cast: ANIMATION_LOCK,
@@ -536,8 +544,8 @@ fn main() {
             secondary_potency: 3800,
             tertiary_potency: 0,
             max_charges: 1,
-        })
-        .add_action(Action {
+        },
+        ActionName::HolySpirit => Action {
             name: ActionName::HolySpirit,
             cooldown_type: CooldownType::Global,
             cast: 1500,
@@ -550,8 +558,8 @@ fn main() {
             secondary_potency: 4500,
             tertiary_potency: 6500,
             max_charges: 1,
-        })
-        .add_action(Action {
+        },
+        ActionName::Requiescat => Action {
             name: ActionName::Requiescat,
             cooldown_type: CooldownType::OffGlobal,
             cast: ANIMATION_LOCK,
@@ -564,8 +572,8 @@ fn main() {
             secondary_potency: 0,
             tertiary_potency: 0,
             max_charges: 1,
-        })
-        .add_action(Action {
+        },
+        ActionName::Intervene => Action {
             name: ActionName::Intervene,
             cooldown_type: CooldownType::OffGlobal,
             cast: ANIMATION_LOCK,
@@ -578,8 +586,8 @@ fn main() {
             secondary_potency: 0,
             tertiary_potency: 0,
             max_charges: 2,
-        })
-        .add_action(Action {
+        },
+        ActionName::Atonement => Action {
             name: ActionName::Atonement,
             cooldown_type: CooldownType::Global,
             cast: ANIMATION_LOCK,
@@ -592,8 +600,8 @@ fn main() {
             secondary_potency: 0,
             tertiary_potency: 0,
             max_charges: 1,
-        })
-        .add_action(Action {
+        },
+        ActionName::Confiteor => Action {
             name: ActionName::Confiteor,
             cooldown_type: CooldownType::Global,
             cast: ANIMATION_LOCK,
@@ -606,8 +614,8 @@ fn main() {
             secondary_potency: 9000,
             tertiary_potency: 0,
             max_charges: 1,
-        })
-        .add_action(Action {
+        },
+        ActionName::Expiacion => Action {
             name: ActionName::Expiacion,
             cooldown_type: CooldownType::OffGlobal,
             cast: ANIMATION_LOCK,
@@ -620,8 +628,8 @@ fn main() {
             secondary_potency: 0,
             tertiary_potency: 0,
             max_charges: 1,
-        })
-        .add_action(Action {
+        },
+        ActionName::BladeOfFaith => Action {
             name: ActionName::BladeOfFaith,
             cooldown_type: CooldownType::Global,
             cast: ANIMATION_LOCK,
@@ -634,8 +642,8 @@ fn main() {
             secondary_potency: 7000,
             tertiary_potency: 0,
             max_charges: 1,
-        })
-        .add_action(Action {
+        },
+        ActionName::BladeOfTruth => Action {
             name: ActionName::BladeOfTruth,
             cooldown_type: CooldownType::Global,
             cast: ANIMATION_LOCK,
@@ -648,8 +656,8 @@ fn main() {
             secondary_potency: 8000,
             tertiary_potency: 0,
             max_charges: 1,
-        })
-        .add_action(Action {
+        },
+        ActionName::BladeOfValor => Action {
             name: ActionName::BladeOfValor,
             cooldown_type: CooldownType::Global,
             cast: ANIMATION_LOCK,
@@ -662,7 +670,8 @@ fn main() {
             secondary_potency: 9000,
             tertiary_potency: 0,
             max_charges: 1,
-        });
+        },
+    };
 
     search(&actions_map);
 }
