@@ -1,4 +1,6 @@
-use std::{cmp, collections::BTreeMap, fmt::Debug, hash::Hash};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+use std::{cmp, collections::BTreeMap, fmt::Debug};
 
 use search::search;
 
@@ -9,13 +11,19 @@ mod sequence;
 const ANIMATION_LOCK: u32 = 800;
 const GLOBAL_COOLDOWN: u32 = 2500;
 
-#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
+fn calculate_hash<T: Hash>(t: &T) -> u64 {
+    let mut s = DefaultHasher::new();
+    t.hash(&mut s);
+    s.finish()
+}
+
+#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub enum BasicCombo {
     None,
     FastBlade,
     RiotBlade,
 }
-#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub enum BladeCombo {
     None,
     Confiteor,
@@ -23,19 +31,19 @@ pub enum BladeCombo {
     BladeOfTruth,
 }
 
-#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub enum DivineMight {
     None,
     Ready,
 }
 
-#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Confiteor {
     None,
     Ready,
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Copy, Clone)]
 pub enum ActionName {
     None,
     FastBlade,
@@ -78,7 +86,7 @@ pub struct Action {
     max_charges: u32,
 }
 
-#[derive(PartialEq, Eq, Clone, Hash)]
+#[derive(PartialEq, Eq, Copy, Clone, Hash)]
 pub struct ActionStatus {
     name: ActionName,
     cooldown: u32,
@@ -110,6 +118,12 @@ pub struct Player {
     action_status: BTreeMap<ActionName, ActionStatus>,
 }
 
+// impl Player {
+//     fn dps(&self) -> f64 {
+//         (self.damage as f64) / (self.time as f64)
+//     }
+// }
+
 impl Hash for Player {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.time.hash(state);
@@ -136,6 +150,27 @@ impl Default for Player {
             confiteor: Confiteor::None,
             action_status: BTreeMap::new(),
         }
+    }
+}
+
+impl PartialOrd for Player {
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Player {
+    fn cmp(&self, other: &Self) -> cmp::Ordering {
+        if self.damage * other.time < other.damage * self.time {
+            return cmp::Ordering::Less;
+        }
+        if self.damage * other.time > other.damage * self.time {
+            return cmp::Ordering::Greater;
+        }
+        if self.time != other.time {
+            return self.time.cmp(&other.time).reverse();
+        }
+        calculate_hash(self).cmp(&calculate_hash(other))
     }
 }
 
@@ -177,15 +212,16 @@ impl ActionStatus {
 pub enum ActionApplyError {
     NotReady,
     MpNotEnough,
+    WaitTooLong,
 }
 
 impl Player {
     pub fn assign_actions(&mut self, actions_map: &ActionsMap) {
         for (action_name, action) in &actions_map.map {
             self.action_status.insert(
-                action_name.clone(),
+                *action_name,
                 ActionStatus {
-                    name: action_name.clone(),
+                    name: *action_name,
                     cooldown: 0,
                     duration: 0,
                     charges: action.max_charges,
@@ -251,6 +287,10 @@ impl Player {
                 },
             );
         }
+
+        // if wait_time > GLOBAL_COOLDOWN {
+        //     return Err(ActionApplyError::WaitTooLong);
+        // }
 
         ret.tick(wait_time, actions_map);
 
@@ -406,7 +446,7 @@ pub struct ActionsMap {
 
 impl ActionsMap {
     pub fn add_action(mut self, action: Action) -> Self {
-        self.map.insert(action.name.clone(), action);
+        self.map.insert(action.name, action);
         self
     }
 }

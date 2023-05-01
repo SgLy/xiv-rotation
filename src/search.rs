@@ -1,15 +1,7 @@
-// use std::collections::BinaryHeap;
-use std::collections::hash_map::DefaultHasher;
-use std::collections::{HashMap, VecDeque};
-use std::hash::{Hash, Hasher};
+// use min_max_heap::MinMaxHeap;
+use std::collections::{BinaryHeap, HashMap};
 
-use crate::{ActionName, ActionsMap, Player};
-
-fn calculate_hash<T: Hash>(t: &T) -> u64 {
-    let mut s = DefaultHasher::new();
-    t.hash(&mut s);
-    s.finish()
-}
+use crate::{calculate_hash, ActionName, ActionsMap, Player};
 
 const MAX_TIME: u32 = 7500;
 
@@ -17,24 +9,23 @@ pub fn search(actions_map: &ActionsMap) {
     let mut player = Player::default();
     player.assign_actions(actions_map);
 
-    // let mut heap = BinaryHeap::new();
-    // heap.push(player);
-
     let h = calculate_hash(&player);
 
-    let mut queue = VecDeque::new();
+    // let mut heap = MinMaxHeap::new();
+    let mut heap = BinaryHeap::new();
     let mut damages = HashMap::new();
     let mut history = HashMap::new();
     damages.insert(h, player.damage);
     history.insert(h, (0u64, ActionName::None));
-    queue.push_back(player);
+    heap.push(player);
 
     let mut cnt = 0;
     let mut ans = 0;
     let mut best_h: u64 = 0;
 
-    while !queue.is_empty() {
-        let mut player = queue.pop_front().unwrap();
+    while !heap.is_empty() {
+        // let mut player = heap.pop_max().unwrap();
+        let mut player = heap.pop().unwrap();
         let h = calculate_hash(&player);
         player.damage = *damages.get(&h).unwrap();
         if player.damage > ans {
@@ -44,7 +35,7 @@ pub fn search(actions_map: &ActionsMap) {
         }
         cnt += 1;
         if cnt % 10000 == 0 {
-            println!("{} {}", cnt, queue.len());
+            println!("{} {}", cnt, heap.len());
         }
         for action_name in actions_map.map.keys() {
             let new_player = player.apply_action(action_name, actions_map);
@@ -53,28 +44,28 @@ pub fn search(actions_map: &ActionsMap) {
                     let new_h = calculate_hash(&new_player);
                     if !damages.contains_key(&new_h) {
                         damages.insert(new_h, new_player.damage);
-                        history.insert(new_h, (h, action_name.clone()));
-                        queue.push_back(new_player);
+                        history.insert(new_h, (h, *action_name));
+                        heap.push(new_player);
                     } else if *damages.get(&new_h).unwrap() > new_player.damage {
                         damages.insert(new_h, new_player.damage);
-                        history.insert(new_h, (h, action_name.clone()));
+                        history.insert(new_h, (h, *action_name));
                     }
                 }
             }
         }
     }
 
-    println!("Done, highest={}", ans);
+    println!("Done, highest={}, count={}", ans, cnt);
 
     let mut current_h = best_h;
     let mut current_action: ActionName;
     let mut action_history = vec![];
     loop {
-        (current_h, current_action) = history.get(&current_h).unwrap().clone();
+        (current_h, current_action) = *history.get(&current_h).unwrap();
         if let ActionName::None = current_action {
             break;
         } else {
-            action_history.push(current_action.clone());
+            action_history.push(current_action);
         }
     }
     action_history.reverse();
